@@ -103,8 +103,8 @@ bot.use((ctx, next) => {
 const isAdmin = (ctx) => String(ctx.from?.id) === ADMIN_ID;
 
 const mainKeyboard = Markup.keyboard([
-  ['➕ הוספת סרט', '🗃️ מאגר סרטים'],
-  ['🔄 שחזור ידני מגיבוי']
+  ['➕ הוספת סרט', '📺 הוספת סדרה'],
+  ['🗃️ מאגר סרטים', '🔄 שחזור ידני מגיבוי']
 ]).resize();
 
 // ==========================================
@@ -131,6 +131,40 @@ bot.hears('➕ הוספת סרט', (ctx) => {
   return ctx.reply(
     `📥 <b>שלב 1 מתוך 2:</b>\n` +
     `שלח או העבר (Forward) אליי כעת את קובץ הסרט.`,
+    { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
+  );
+});
+
+// ==========================================
+// 📺 הוספת סדרה בלחיצה אחת (חדש)
+// ==========================================
+bot.hears('📺 הוספת סדרה', (ctx) => {
+  if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
+
+  ctx.session.step = 'WAIT_SERIES_FILES';
+  ctx.session.seriesQueue = [];
+  return ctx.reply(
+    `📺 <b>הוספת סדרה במהירות:</b>\n\n` +
+    `1️⃣ העבר (Forward) או שלח אליי את קובצי הפרקים <b>לפי הסדר</b> (פרק 1, פרק 2 וכו').\n` +
+    `2️⃣ בסיום העברת כל הקבצים, לחץ על הכפתור <b>'✅ סיימתי להעלות פרקים'</b>.`,
+    { parse_mode: 'HTML', ...Markup.keyboard([['✅ סיימתי להעלות פרקים'], ['❌ ביטול']]).resize() }
+  );
+});
+
+bot.hears('✅ סיימתי להעלות פרקים', (ctx) => {
+  if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
+  if (ctx.session.step !== 'WAIT_SERIES_FILES' || !ctx.session.seriesQueue || ctx.session.seriesQueue.length === 0) {
+    return ctx.reply('⚠️ לא נקלטו קבצים עדיין. אנא שלח קובצי פרקים תחילה.');
+  }
+
+  const count = ctx.session.seriesQueue.length;
+  ctx.session.step = 'WAIT_SERIES_NAME';
+
+  return ctx.reply(
+    `🎉 <b>נקלטו ${count} פרקים בהצלחה!</b>\n\n` +
+    `✍️ <b>שלב אחרון:</b>\n` +
+    `שלח כעת את שם הסדרה והעונה (למשל: <code>סדרה עונה 1</code>).\n\n` +
+    `<i>💡 רוצה להתחיל מפרק מסוים? (למשל מפרק 5 והלאה): רשום <code>סדרה עונה 1 | 5</code></i>`,
     { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
   );
 });
@@ -176,7 +210,7 @@ bot.hears('🔄 שחזור ידני מגיבוי', (ctx) => {
 });
 
 // ==========================================
-// 📥 קליטת סרטים וחיפושים בפרטי
+// 📥 קליטת סרטים, סדרות וחיפושים בפרטי
 // ==========================================
 bot.on('message', async (ctx, next) => {
   if (ctx.chat.type !== 'private') return next();
@@ -184,7 +218,71 @@ bot.on('message', async (ctx, next) => {
 
   const step = ctx.session.step;
 
-  // קליטת קובץ הסרט
+  // קליטת קבצים סדרתיים לתור
+  if (step === 'WAIT_SERIES_FILES') {
+    const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
+    if (isMedia) {
+      if (!ctx.session.seriesQueue) ctx.session.seriesQueue = [];
+      ctx.session.seriesQueue.push({
+        from_chat_id: ctx.chat.id,
+        message_id: ctx.message.message_id
+      });
+
+      const count = ctx.session.seriesQueue.length;
+      return ctx.reply(`📥 <b>פרק #${count} נקלט בתור!</b>\nלחץ '✅ סיימתי להעלות פרקים' בסיום.`, { parse_mode: 'HTML' });
+    }
+  }
+
+  // קליטת שם הסדרה והחלת השמות האוטומטית
+  if (step === 'WAIT_SERIES_NAME' && ctx.message.text) {
+    const rawInput = ctx.message.text.trim();
+    if (rawInput === '✅ סיימתי להעלות פרקים' || rawInput === '❌ ביטול') return next();
+
+    let seriesTitle = rawInput;
+    let startEp = 1;
+
+    if (rawInput.includes('|')) {
+      const parts = rawInput.split('|');
+      seriesTitle = parts[0].trim();
+      const parsedEp = parseInt(parts[1].trim());
+      if (!isNaN(parsedEp)) startEp = parsedEp;
+    }
+
+    const queue = ctx.session.seriesQueue || [];
+    if (queue.length === 0) {
+      ctx.session = {};
+      return ctx.reply('❌ אירעה שגיאה: לא נקלטו קבצים.', mainKeyboard);
+    }
+
+    const addedList = [];
+    queue.forEach((item, index) => {
+      const epNum = startEp + index;
+      const epTitle = `${seriesTitle} פרק ${epNum}`;
+      const newMovie = {
+        id: 'mov_' + Date.now() + '_' + index,
+        title: epTitle,
+        aliases: [epTitle],
+        from_chat_id: item.from_chat_id,
+        message_id: item.message_id
+      };
+      db.movies.push(newMovie);
+      addedList.push(epTitle);
+    });
+
+    await saveDb(db);
+
+    ctx.session = {};
+    return ctx.reply(
+      `🎉 <b>הסדרה נקלטה בהצלחה במאגר!</b>\n\n` +
+      `📺 <b>סדרה:</b> ${seriesTitle}\n` +
+      `📦 <b>סה"כ פרקים שנוספו:</b> ${addedList.length}\n\n` +
+      `📋 <b>רשימת הפרקים:</b>\n` +
+      addedList.map(t => `• <code>${t}</code>`).join('\n'),
+      { parse_mode: 'HTML', ...mainKeyboard }
+    );
+  }
+
+  // קליטת קובץ הסרט (הקיים)
   if (step === 'WAIT_FILE') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (!isMedia) {
@@ -206,7 +304,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // קליטת שמות החיפוש
+  // קליטת שמות החיפוש (הקיים)
   if (step === 'WAIT_TITLE' && ctx.message.text) {
     const input = ctx.message.text.trim();
     const aliases = input.split(/,|,\s*|\n/).map(s => s.trim()).filter(Boolean);
@@ -232,7 +330,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // שחזור ידני
+  // שחזור ידני (הקיים)
   if (step === 'WAIT_BACKUP' && ctx.message.document) {
     try {
       const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
