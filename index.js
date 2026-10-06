@@ -117,7 +117,7 @@ function loadLocalDb() {
       };
     }
   } catch (e) {
-    console.error('⚠️️ שגיאה בקריאת מאגר מקומי:', e.message);
+    console.error('⚠ שגיאה בקריאת מאגר מקומי:', e.message);
   }
   return { movies: [], channels: [], pendingRequests: [] };
 }
@@ -177,7 +177,7 @@ async function autoRestoreFromTelegram() {
       });
     }
   } catch (e) {
-    console.log('ℹ️️ לא נמצא גיבוי נעוץ לשחזור.');
+    console.log('ℹ לא נמצא גיבוי נעוץ לשחזור.');
   }
 }
 
@@ -641,10 +641,22 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ==========================================
-// 🔍 מנוע חיפוש בקבוצה + הצגת ערוצים מעוצבים
+// 🔍 מנוע חיפוש בקבוצה + הגבלת כפתורים והצגת הכל
 // ==========================================
-function buildSearchKeyboard(searchKey, matches) {
-  const buttons = matches.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
+function buildSearchKeyboard(searchKey, matches, showAll = false) {
+  const MAX_LIMIT = 6;
+  const itemsToDisplay = (!showAll && matches.length > MAX_LIMIT)
+    ? matches.slice(0, MAX_LIMIT)
+    : matches;
+
+  const buttons = itemsToDisplay.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
+
+  if (!showAll && matches.length > MAX_LIMIT) {
+    const remaining = matches.length - MAX_LIMIT;
+    buttons.push([
+      Markup.button.callback(`🔽 הצג את כל התוצאות (+${remaining} נוספים)`, `showall_${searchKey}`)
+    ]);
+  }
 
   if (matches.length > 1) {
     buttons.push([
@@ -654,6 +666,25 @@ function buildSearchKeyboard(searchKey, matches) {
 
   return Markup.inlineKeyboard(buttons);
 }
+
+bot.action(/^showall_(.+)$/, async (ctx) => {
+  const searchKey = ctx.match[1];
+  const matches = global.searchCache?.get(searchKey);
+
+  if (!matches || matches.length === 0) {
+    return ctx.answerCbQuery('❌ פג תוקף החיפוש, אנא בצע חיפוש חדש בקבוצה.', { show_alert: true });
+  }
+
+  ctx.answerCbQuery('📋 מציג את כל הפרקים והתוצאות...');
+
+  try {
+    await ctx.editMessageReplyMarkup(
+      buildSearchKeyboard(searchKey, matches, true).reply_markup
+    );
+  } catch (e) {
+    console.error('❌ שגיאה בעדכון כפתורי אינליין:', e.message);
+  }
+});
 
 bot.on('message', async (ctx, next) => {
   if (ctx.chat.type === 'private') return next();
@@ -684,7 +715,7 @@ bot.on('message', async (ctx, next) => {
     }
 
     const errReply = await ctx.reply(
-      `⚠️ <b>לא נמצאו תוצאות עבור:</b> "<code>${query}</code>"\n` +
+      `⚠️️ <b>לא נמצאו תוצאות עבור:</b> "<code>${query}</code>"\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
       `📌 <b>הבקשה שלך הועברה אוטומטית למנהלים להוספה!</b>`,
       {
@@ -711,7 +742,7 @@ bot.on('message', async (ctx, next) => {
       {
         parse_mode: 'HTML',
         reply_to_message_id: ctx.message.message_id,
-        ...buildSearchKeyboard(searchKey, movieMatches)
+        ...buildSearchKeyboard(searchKey, movieMatches, false)
       }
     ).catch(() => {});
   }
@@ -736,7 +767,7 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ==========================================
-// 🎞️️ שליחת כל הפרקים ישירות לקבוצה (תוקן ומשודרג)
+// 🎞 שליחת כל הפרקים ישירות לקבוצה (תוקן ומשודרג)
 // ==========================================
 bot.action(/^sendall_(.+)$/, async (ctx) => {
   const searchKey = ctx.match[1];
