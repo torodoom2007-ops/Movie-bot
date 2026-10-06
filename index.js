@@ -117,7 +117,7 @@ function loadLocalDb() {
       };
     }
   } catch (e) {
-    console.error('⚠️ שגיאה בקריאת מאגר מקומי:', e.message);
+    console.error('⚠️️ שגיאה בקריאת מאגר מקומי:', e.message);
   }
   return { movies: [], channels: [], pendingRequests: [] };
 }
@@ -177,7 +177,7 @@ async function autoRestoreFromTelegram() {
       });
     }
   } catch (e) {
-    console.log('ℹ️ לא נמצא גיבוי נעוץ לשחזור.');
+    console.log('ℹ️️ לא נמצא גיבוי נעוץ לשחזור.');
   }
 }
 
@@ -204,31 +204,9 @@ const getMainKeyboard = () => {
 };
 
 // ==========================================
-// 🚀 START & DEEP LINKS
+// 🚀 START
 // ==========================================
 bot.start(async (ctx) => {
-  const payload = ctx.startPayload;
-
-  if (payload && payload.startsWith('sendall_')) {
-    const searchKey = payload.replace('sendall_', '');
-    const matches = global.searchCache?.get(searchKey);
-
-    if (matches && matches.length > 0) {
-      await ctx.reply(`🍿 <b>שולח אליך את כל ${matches.length} הפרקים שנמצאו:</b>`, { parse_mode: 'HTML' });
-      for (const movie of matches) {
-        try {
-          await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
-            caption: BRAND_CAPTION(movie.title),
-            parse_mode: 'HTML'
-          });
-        } catch (err) {}
-      }
-      return ctx.reply(`✅ <b>כל הפרקים נשלחו בהצלחה! צפייה מהנה!</b> 🍿`, { parse_mode: 'HTML' });
-    } else {
-      return ctx.reply('⚠️ פג תוקף החיפוש. אנא בצע חיפוש חדש בקבוצה.');
-    }
-  }
-
   if (isAdmin(ctx)) {
     ctx.session = {};
     return ctx.reply(
@@ -248,7 +226,7 @@ bot.start(async (ctx) => {
 });
 
 // ==========================================
-// 📢 ניהול ערוצים / קבוצות שמורות (מתוקן ומאובטח)
+// 📢 ניהול ערוצים / קבוצות שמורות
 // ==========================================
 bot.hears('📢 הוספת ערוץ/סדרה', (ctx) => {
   if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
@@ -462,7 +440,7 @@ bot.hears('🔄 שחזור ידני מגיבוי', (ctx) => {
 });
 
 // ==========================================
-// 📥 קליטת נתונים בצ'אט פרטי (משודרג ומאובטח)
+// 📥 קליטת נתונים בצ'אט פרטי
 // ==========================================
 bot.on('message', async (ctx, next) => {
   if (ctx.chat.type !== 'private') return next();
@@ -471,19 +449,14 @@ bot.on('message', async (ctx, next) => {
   const step = ctx.session?.step;
   if (!step) return next();
 
-  // טיפול בביטול
   if (ctx.message.text === '❌ ביטול') {
     ctx.session = {};
     return ctx.reply('הפעולה בוטלה.', getMainKeyboard());
   }
 
-  // --- הוספת ערוץ/קבוצה ---
   if (step === 'WAIT_CHANNEL_LINK') {
-    if (!ctx.message.text) {
-      return ctx.reply('⚠️ אנא שלח קישור תקין בטקסט.');
-    }
-    const link = ctx.message.text.trim();
-    ctx.session.tempChannelLink = link;
+    if (!ctx.message.text) return ctx.reply('⚠️ אנא שלח קישור תקין בטקסט.');
+    ctx.session.tempChannelLink = ctx.message.text.trim();
     ctx.session.step = 'WAIT_CHANNEL_INFO';
 
     return ctx.reply(
@@ -495,14 +468,11 @@ bot.on('message', async (ctx, next) => {
   }
 
   if (step === 'WAIT_CHANNEL_INFO') {
-    if (!ctx.message.text) {
-      return ctx.reply('⚠️ אנא שלח טקסט עבור שם הערוץ ומילות החיפוש.');
-    }
-
+    if (!ctx.message.text) return ctx.reply('⚠️ אנא שלח טקסט עבור שם הערוץ ומילות החיפוש.');
     const link = ctx.session.tempChannelLink;
     if (!link) {
       ctx.session = {};
-      return ctx.reply('❌ הקישור אבד. אנא התחל את תהליך הוספת הערוץ מחדש.', getMainKeyboard());
+      return ctx.reply('❌ הקישור אבד. אנא התחל שוב.', getMainKeyboard());
     }
 
     const input = ctx.message.text.trim();
@@ -510,7 +480,6 @@ bot.on('message', async (ctx, next) => {
     const mainTitle = aliases[0] || 'ערוץ ללא שם';
 
     if (!Array.isArray(db.channels)) db.channels = [];
-
     db.channels.push({
       id: 'chan_' + Date.now(),
       title: mainTitle,
@@ -530,7 +499,6 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // --- הוספת סדרה ---
   if (step === 'WAIT_SERIES_FILES') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (isMedia) {
@@ -592,7 +560,6 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // --- הוספת סרט ---
   if (step === 'WAIT_FILE') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (!isMedia) return ctx.reply('⚠ אנא שלח קובץ וידאו או מסמך תקין.');
@@ -640,7 +607,6 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // --- שחזור גיבוי ---
   if (step === 'WAIT_BACKUP' && ctx.message.document) {
     try {
       const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
@@ -680,9 +646,11 @@ bot.on('message', async (ctx, next) => {
 function buildSearchKeyboard(searchKey, matches) {
   const buttons = matches.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
 
-  buttons.push([
-    Markup.button.callback(`📩 שולח בפרטי את כל הפרקים 🎞️`, `sendall_${searchKey}`)
-  ]);
+  if (matches.length > 1) {
+    buttons.push([
+      Markup.button.callback(`🎬 שלח את כל ${matches.length} הפרקים לקבוצה 🎞️`, `sendall_${searchKey}`)
+    ]);
+  }
 
   return Markup.inlineKeyboard(buttons);
 }
@@ -739,7 +707,7 @@ bot.on('message', async (ctx, next) => {
     await ctx.reply(
       `🔎 <b>נמצאו ${movieMatches.length} תוצאות עבור:</b> "<b>${query}</b>"\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `בחר פרק מבוקש או לחץ על <b>'שולח בפרטי'</b>:`,
+      `בחר פרק מבוקש או לחץ על <b>'שלח את כל הפרקים לקבוצה'</b>:`,
       {
         parse_mode: 'HTML',
         reply_to_message_id: ctx.message.message_id,
@@ -768,7 +736,7 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ==========================================
-// 🎞️ שילוח בפרטי
+// 🎞️️ שליחת כל הפרקים ישירות לקבוצה (תוקן ומשודרג)
 // ==========================================
 bot.action(/^sendall_(.+)$/, async (ctx) => {
   const searchKey = ctx.match[1];
@@ -778,53 +746,45 @@ bot.action(/^sendall_(.+)$/, async (ctx) => {
     return ctx.answerCbQuery('❌ פג תוקף החיפוש, אנא בצע חיפוש חדש בקבוצה.', { show_alert: true });
   }
 
-  const userId = ctx.from.id;
   const senderName = ctx.from?.first_name || 'משתמש';
+  ctx.answerCbQuery('🎞️ שולח את כל הפרקים לקבוצה...');
 
-  ctx.answerCbQuery('🎞️ מעבד שליחה בצ\'אט הפרטי...');
+  try {
+    await ctx.editMessageText(
+      `⏳ <b>שולח כעת ${matches.length} פרקים לקבוצה...</b>\n` +
+      `<i>לבקשת: ${senderName}</i>`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (e) {}
 
   let successCount = 0;
-  let hasError = false;
 
   for (const movie of matches) {
     try {
-      await ctx.telegram.copyMessage(userId, movie.from_chat_id, movie.message_id, {
+      await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
         caption: BRAND_CAPTION(movie.title),
         parse_mode: 'HTML'
       });
       successCount++;
     } catch (err) {
-      hasError = true;
-      break;
+      try {
+        await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id);
+        successCount++;
+      } catch (e) {}
     }
-  }
-
-  if (hasError && successCount === 0) {
-    const botUrl = `https://t.me/${BOT_USERNAME || 'bot'}?start=sendall_${searchKey}`;
-    
-    return ctx.reply(
-      `⚠️ <b>שלום ${senderName}!</b>\n` +
-      `כדי לקבל את הפרקים בצ'אט הפרטי, עליך להפעיל את הבוט תחילה.\n\n` +
-      `👇 <b>לחץ על הכפתור למטה ולחץ START בבוט:</b>`,
-      {
-        parse_mode: 'HTML',
-        reply_to_message_id: ctx.callbackQuery.message.message_id,
-        ...Markup.inlineKeyboard([
-          [Markup.button.url('🚀 לחץ כאן להפעלת הבוט (START) 🎞️', botUrl)]
-        ])
-      }
-    );
   }
 
   if (successCount > 0) {
     try {
       await ctx.reply(
-        `✅ <b>נשלחו ${successCount} פרקים בצ'אט הפרטי עבור ${senderName}!</b> 🍿`,
-        {
-          parse_mode: 'HTML',
-          reply_to_message_id: ctx.callbackQuery.message.message_id
-        }
+        `✅ <b>נשלחו ${successCount} פרקים בהצלחה בקבוצה!</b>\n` +
+        `👤 לבקשת: <b>${senderName}</b> 🍿`,
+        { parse_mode: 'HTML' }
       );
+    } catch (e) {}
+  } else {
+    try {
+      await ctx.reply(`❌ שגיאה בשליחת הקבצים לקבוצה.`, { parse_mode: 'HTML' });
     } catch (e) {}
   }
 });
