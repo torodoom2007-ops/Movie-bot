@@ -31,7 +31,7 @@ const BRAND_CAPTION = (title) =>
   `🔗 <a href="https://t.me/movie_time_by">להצטרפות לערוץ הרשמי שלנו</a>`;
 
 // ==========================================
-// 🧠 מנוע חיפוש חכם, ממוקד ונוקשה
+// 🧠 מנוע חיפוש מדויק - התאמת מילים שלמות בלבד
 // ==========================================
 
 function normalizeText(str) {
@@ -48,65 +48,59 @@ function normalizeText(str) {
     .trim();
 }
 
-function smartSearch(query, movies) {
+/**
+ * מנוע חיפוש נוקשה הדורש חפיפה של מילים שלמות בלבד
+ */
+function smartSearch(query, items) {
   const cleanQuery = normalizeText(query);
   if (!cleanQuery) return [];
 
+  // פירוק שאילתת החיפוש למילים שלמות
   const queryWords = cleanQuery.split(' ').filter(w => w.length > 1);
   if (queryWords.length === 0) return [];
 
-  const scored = movies.map(movie => {
+  const scored = items.map(item => {
     let maxScore = 0;
+    const aliases = item.aliases || [item.title || item.name];
 
-    for (const alias of (movie.aliases || [])) {
+    for (const alias of aliases) {
       const cleanAlias = normalizeText(alias);
       if (!cleanAlias) continue;
 
-      // 1. התאמה מדויקת מלאה
+      // 1. התאמה של ביטוי שלם מדויק לחלוטין
       if (cleanAlias === cleanQuery) {
         maxScore = Math.max(maxScore, 100);
         continue;
       }
 
-      // 2. תחילת מחרוזת
-      if (cleanAlias.startsWith(cleanQuery)) {
-        maxScore = Math.max(maxScore, 85);
-        continue;
-      }
+      // פירוק שם הפריט במאגר למילים שלמות
+      const aliasWords = cleanAlias.split(' ').filter(w => w.length > 1);
 
-      // 3. מכיל את כל ביטוי החיפוש
-      if (cleanAlias.includes(cleanQuery)) {
-        maxScore = Math.max(maxScore, 75);
-        continue;
-      }
-
-      // 4. בדיקת מילים נוקשה
-      const aliasWords = cleanAlias.split(' ').filter(w => w.length > 0);
-      let matchedWordsCount = 0;
-
+      // 2. בדיקה נוקשה: ספירת מילים שלמות ומדויקות בלבד!
+      // "הארי" === "הארי" (לא יתאים ל-"האריה")
+      let exactWordMatches = 0;
       for (const qw of queryWords) {
-        const hasMatch = aliasWords.some(aw => aw.includes(qw) || qw.includes(aw));
-        if (hasMatch) {
-          matchedWordsCount++;
+        if (aliasWords.includes(qw)) {
+          exactWordMatches++;
         }
       }
 
-      // אם יש לפחות מילה אחת חופפת, מחושב ציון יחסי. אחרת הציון נשאר 0!
-      if (matchedWordsCount > 0) {
-        const wordRatio = matchedWordsCount / queryWords.length;
-        const score = 40 + (wordRatio * 30);
+      // חובה שתהיה לפחות מילה שלמה אחת תואמת לחלוטין!
+      if (exactWordMatches > 0) {
+        const ratio = exactWordMatches / queryWords.length;
+        const score = 50 + (ratio * 40);
         maxScore = Math.max(maxScore, score);
       }
     }
 
-    return { movie, score: maxScore };
+    return { item, score: maxScore };
   });
 
-  // סף נוקשה: רק תוצאות עם ציון 40 ומעלה (לפחות מילה אחת תואמת ממש) יוחזרו!
+  // החזרת פריטים עם ציון 50 ומעלה בלבד (התאמת מילה שלמה ומדויקת)
   return scored
-    .filter(item => item.score >= 40)
+    .filter(res => res.score >= 50)
     .sort((a, b) => b.score - a.score)
-    .map(item => item.movie);
+    .map(res => res.item);
 }
 
 function autoDeleteMessage(ctx, chatId, messageId, delayMs = 12000) {
@@ -126,13 +120,14 @@ function loadLocalDb() {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       if (!parsed.movies) parsed.movies = [];
+      if (!parsed.channels) parsed.channels = [];
       if (!parsed.pendingRequests) parsed.pendingRequests = [];
       return parsed;
     }
   } catch (e) {
     console.error('⚠️ שגיאה בקריאת מאגר מקומי:', e.message);
   }
-  return { movies: [], pendingRequests: [] };
+  return { movies: [], channels: [], pendingRequests: [] };
 }
 
 let db = loadLocalDb();
@@ -144,7 +139,13 @@ async function saveDb(data) {
     const doc = await bot.telegram.sendDocument(ADMIN_ID, {
       source: DB_FILE,
       filename: 'movies_db.json'
-    }, { caption: '🔄 <b>גיבוי מאגר אוטומטי</b>', parse_mode: 'HTML' });
+    }, { 
+      caption: `🔄 <b>גיבוי מאגר אוטומטי מעודכן</b>\n` +
+               `🎬 סרטים/פרקים: <code>${data.movies.length}</code>\n` +
+               `📢 ערוצים/קבוצות: <code>${data.channels.length}</code>\n` +
+               `📋 בקשות ממתינות: <code>${data.pendingRequests.length}</code>`, 
+      parse_mode: 'HTML' 
+    });
 
     if (doc?.message_id) {
       await bot.telegram.pinChatMessage(ADMIN_ID, doc.message_id, { disable_notification: true }).catch(() => {});
@@ -155,7 +156,7 @@ async function saveDb(data) {
 }
 
 async function autoRestoreFromTelegram() {
-  if (db.movies && db.movies.length > 0) return;
+  if ((db.movies && db.movies.length > 0) || (db.channels && db.channels.length > 0)) return;
 
   console.log('🔍 מנסה לשחזר מאגר מנעיצה בטלגרם...');
   try {
@@ -170,11 +171,13 @@ async function autoRestoreFromTelegram() {
         res.on('end', () => {
           try {
             const restored = JSON.parse(rawData);
-            if (restored && Array.isArray(restored.movies)) {
+            if (restored) {
               db = restored;
+              if (!db.movies) db.movies = [];
+              if (!db.channels) db.channels = [];
               if (!db.pendingRequests) db.pendingRequests = [];
               fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-              console.log(`✅ שוחזרו בהצלחה ${db.movies.length} סרטים מהגיבוי בענן!`);
+              console.log(`✅ שוחזרו בהצלחה ${db.movies.length} סרטים ו-${db.channels.length} ערוצים מהגיבוי בענן!`);
             }
           } catch (err) {}
         });
@@ -186,7 +189,7 @@ async function autoRestoreFromTelegram() {
 }
 
 // ==========================================
-// 🛡️ MIDDLEWARES
+// 🛡️ MIDDLEWARES & KEYBOARDS
 // ==========================================
 bot.use(session());
 bot.use((ctx, next) => {
@@ -198,9 +201,11 @@ const isAdmin = (ctx) => String(ctx.from?.id) === ADMIN_ID;
 
 const getMainKeyboard = () => {
   const reqCount = db.pendingRequests ? db.pendingRequests.length : 0;
+  const chanCount = db.channels ? db.channels.length : 0;
   return Markup.keyboard([
     ['➕ הוספת סרט', '📺 הוספת סדרה'],
-    [`📋 בקשות ממתינות (${reqCount})`, '🗃️ מאגר סרטים'],
+    ['📢 הוספת ערוץ/סדרה', `📋 בקשות ממתינות (${reqCount})`],
+    ['🗃️ מאגר סרטים', `📢 ערוצים שמורים (${chanCount})`],
     ['🔄 שחזור ידני מגיבוי']
   ]).resize();
 };
@@ -212,25 +217,23 @@ const getMainKeyboard = () => {
 bot.start(async (ctx) => {
   const payload = ctx.startPayload;
 
-  if (payload) {
-    if (payload.startsWith('sendall_')) {
-      const searchKey = payload.replace('sendall_', '');
-      const matches = global.searchCache?.get(searchKey);
+  if (payload && payload.startsWith('sendall_')) {
+    const searchKey = payload.replace('sendall_', '');
+    const matches = global.searchCache?.get(searchKey);
 
-      if (matches && matches.length > 0) {
-        await ctx.reply(`🍿 <b>שולח אליך את כל ${matches.length} הפרקים שנמצאו:</b>`, { parse_mode: 'HTML' });
-        for (const movie of matches) {
-          try {
-            await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
-              caption: BRAND_CAPTION(movie.title),
-              parse_mode: 'HTML'
-            });
-          } catch (err) {}
-        }
-        return ctx.reply(`✅ <b>כל הפרקים נשלחו בהצלחה! צפייה מהנה!</b> 🍿`, { parse_mode: 'HTML' });
-      } else {
-        return ctx.reply('⚠️ פג תוקף החיפוש. אנא בצע חיפוש חדש בקבוצה.');
+    if (matches && matches.length > 0) {
+      await ctx.reply(`🍿 <b>שולח אליך את כל ${matches.length} הפרקים שנמצאו:</b>`, { parse_mode: 'HTML' });
+      for (const movie of matches) {
+        try {
+          await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
+            caption: BRAND_CAPTION(movie.title),
+            parse_mode: 'HTML'
+          });
+        } catch (err) {}
       }
+      return ctx.reply(`✅ <b>כל הפרקים נשלחו בהצלחה! צפייה מהנה!</b> 🍿`, { parse_mode: 'HTML' });
+    } else {
+      return ctx.reply('⚠️ פג תוקף החיפוש. אנא בצע חיפוש חדש בקבוצה.');
     }
   }
 
@@ -246,10 +249,57 @@ bot.start(async (ctx) => {
     return ctx.reply(
       `🍿 <b>ברוכים הבאים ל-MOVIE TIME VIP!</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `כדי לחפש סרטים וסדרות, פשוט הקלד את שם הסרט/הסדרה בקבוצה שלנו!`,
+      `כדי לחפש סרטים, סדרות וערוצים, פשוט הקלד את השם בקבוצה שלנו!`,
       { parse_mode: 'HTML' }
     );
   }
+});
+
+// ==========================================
+// 📢 ניהול ערוצים / קבוצות שמורות
+// ==========================================
+
+bot.hears('📢 הוספת ערוץ/סדרה', (ctx) => {
+  if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
+
+  ctx.session.step = 'WAIT_CHANNEL_LINK';
+  return ctx.reply(
+    `🔗 <b>שלב 1 מתוך 2: הוספת ערוץ/קבוצה מומלצת</b>\n\n` +
+    `שלח כעת את קישור הקישור הציבורי או הפרטי של הערוץ/הקבוצה:\n` +
+    `<i>(למשל: https://t.me/example_channel)</i>`,
+    { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
+  );
+});
+
+bot.hears(/^📢 ערוצים שמורים/, (ctx) => {
+  if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
+
+  const channels = db.channels || [];
+  if (channels.length === 0) {
+    return ctx.reply('📢 אין ערוצים או קבוצות שמורות במאגר.', getMainKeyboard());
+  }
+
+  ctx.reply(`📢 <b>רשימת ערוצים/קבוצות שמורות (${channels.length}):</b>`, { parse_mode: 'HTML' });
+  channels.forEach((c) => {
+    ctx.reply(
+      `📌 <b>שם:</b> ${c.title}\n` +
+      `🔗 <b>קישור:</b> ${c.link}\n` +
+      `🔍 <b>מילות מפתח:</b> <code>${c.aliases.join(', ')}</code>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🗑️ מחק ערוץ', `del_chan_${c.id}`)]])
+      }
+    );
+  });
+});
+
+bot.action(/^del_chan_(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  const chanId = ctx.match[1];
+  db.channels = (db.channels || []).filter(c => c.id !== chanId);
+  await saveDb(db);
+  ctx.answerCbQuery('🗑️ הערוץ נמחק!');
+  return ctx.editMessageText('❌ <i>הערוץ הוסר מהמאגר.</i>', { parse_mode: 'HTML' });
 });
 
 // ==========================================
@@ -286,7 +336,6 @@ bot.hears(/^📋 בקשות ממתינות/, (ctx) => {
   });
 });
 
-// מחיקת בקשה ממתינה
 bot.action(/^del_req_(.+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return;
   const reqId = ctx.match[1];
@@ -296,7 +345,6 @@ bot.action(/^del_req_(.+)$/, async (ctx) => {
   return ctx.editMessageText('❌ <i>הבקשה הוסרה מהרשימה.</i>', { parse_mode: 'HTML' });
 });
 
-// הוספת סרט מהירה מתוך בקשה
 bot.action(/^qadd_mov_(.+)$/, (ctx) => {
   if (!isAdmin(ctx)) return;
   const reqId = ctx.match[1];
@@ -316,7 +364,6 @@ bot.action(/^qadd_mov_(.+)$/, (ctx) => {
   );
 });
 
-// הוספת סדרה מהירה מתוך בקשה
 bot.action(/^qadd_ser_(.+)$/, (ctx) => {
   if (!isAdmin(ctx)) return;
   const reqId = ctx.match[1];
@@ -339,7 +386,7 @@ bot.action(/^qadd_ser_(.+)$/, (ctx) => {
 });
 
 // ==========================================
-// 👑 פאנל ניהול אדמין
+// 👑 פאנל ניהול אדמין - הוספת סרטים וסדרות
 // ==========================================
 
 bot.hears('➕ הוספת סרט', (ctx) => {
@@ -426,7 +473,7 @@ bot.hears('🔄 שחזור ידני מגיבוי', (ctx) => {
 });
 
 // ==========================================
-// 📥 קליטת סרטים, סדרות ושיחות בפרטי
+// 📥 קליטת נתונים בצ'אט פרטי
 // ==========================================
 
 bot.on('message', async (ctx, next) => {
@@ -435,7 +482,51 @@ bot.on('message', async (ctx, next) => {
 
   const step = ctx.session.step;
 
-  // קליטת פרקים
+  // 1. קליטת קישור לערוץ
+  if (step === 'WAIT_CHANNEL_LINK' && ctx.message.text) {
+    const link = ctx.message.text.trim();
+    if (link === '❌ ביטול') return next();
+
+    ctx.session.tempChannel = { link };
+    ctx.session.step = 'WAIT_CHANNEL_INFO';
+
+    return ctx.reply(
+      `✍️ <b>שלב 2 מתוך 2:</b>\n` +
+      `שלח כעת את **שם הערוץ/הסדרה ומילות החיפוש** (מופרדות בפסיקים).\n\n` +
+      `<i>דוגמה: <code>ריק ומורטי, Rick and Morty, ריק ומורטי ערוץ רשמי</code></i>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  // 2. קליטת פרטי הערוץ ושמירה
+  if (step === 'WAIT_CHANNEL_INFO' && ctx.message.text) {
+    const input = ctx.message.text.trim();
+    if (input === '❌ ביטול') return next();
+
+    const aliases = input.split(/,|,\s*|\n/).map(s => s.trim()).filter(Boolean);
+    const mainTitle = aliases[0] || 'ערוץ ללא שם';
+
+    if (!db.channels) db.channels = [];
+    db.channels.push({
+      id: 'chan_' + Date.now(),
+      title: mainTitle,
+      link: ctx.session.tempChannel.link,
+      aliases: aliases
+    });
+
+    await saveDb(db);
+    ctx.session = {};
+
+    return ctx.reply(
+      `🎉 <b>הערוץ/הקבוצה נשמרו בהצלחה במאגר!</b>\n\n` +
+      `📢 <b>שם:</b> ${mainTitle}\n` +
+      `🔗 <b>קישור:</b> ${ctx.session.tempChannel.link}\n` +
+      `🔍 <b>מילות מפתח:</b> <code>${aliases.join(', ')}</code>`,
+      { parse_mode: 'HTML', ...getMainKeyboard() }
+    );
+  }
+
+  // 3. קליטת פרקי סדרה
   if (step === 'WAIT_SERIES_FILES') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (isMedia) {
@@ -450,7 +541,7 @@ bot.on('message', async (ctx, next) => {
     }
   }
 
-  // קליטת שם סדרה
+  // 4. קליטת שם סדרה
   if (step === 'WAIT_SERIES_NAME' && ctx.message.text) {
     const rawInput = ctx.message.text.trim();
     if (rawInput === '✅ סיימתי להעלות פרקים' || rawInput === '❌ ביטול') return next();
@@ -485,7 +576,6 @@ bot.on('message', async (ctx, next) => {
       addedList.push(epTitle);
     });
 
-    // הסרה מבאקשות ממתינות אם זו הייתה בקשה
     if (ctx.session.pendingReqId) {
       db.pendingRequests = (db.pendingRequests || []).filter(r => r.id !== ctx.session.pendingReqId);
     }
@@ -501,7 +591,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // קליטת קובץ סרט
+  // 5. קליטת קובץ סרט
   if (step === 'WAIT_FILE') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (!isMedia) return ctx.reply('⚠️ אנא שלח קובץ וידאו או מסמך תקין.');
@@ -523,7 +613,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // קליטת שמות חיפוש לסרט
+  // 6. קליטת שמות חיפוש לסרט
   if (step === 'WAIT_TITLE' && ctx.message.text) {
     const input = ctx.message.text.trim();
     const aliases = input.split(/,|,\s*|\n/).map(s => s.trim()).filter(Boolean);
@@ -550,7 +640,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // שחזור ידני
+  // 7. שחזור ידני
   if (step === 'WAIT_BACKUP' && ctx.message.document) {
     try {
       const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
@@ -559,8 +649,10 @@ bot.on('message', async (ctx, next) => {
         res.on('data', chunk => raw += chunk);
         res.on('end', async () => {
           const parsed = JSON.parse(raw);
-          if (parsed && Array.isArray(parsed.movies)) {
+          if (parsed) {
             db = parsed;
+            if (!db.movies) db.movies = [];
+            if (!db.channels) db.channels = [];
             if (!db.pendingRequests) db.pendingRequests = [];
             await saveDb(db);
             ctx.session = {};
@@ -578,7 +670,7 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ==========================================
-// 🔍 מנוע חיפוש בקבוצה + רישום בקשות
+// 🔍 מנוע חיפוש בקבוצה + הצגת ערוצים מעוצבים
 // ==========================================
 
 function buildSearchKeyboard(searchKey, matches) {
@@ -598,12 +690,14 @@ bot.on('message', async (ctx, next) => {
   const query = ctx.message.text.trim();
   if (query.length < 2) return next();
 
-  // חיפוש חכם ונוקשה
-  const matches = smartSearch(query, db.movies || []);
+  // 1. חיפוש מדויק במאגר הסרטים/הפרקים
+  const movieMatches = smartSearch(query, db.movies || []);
 
-  // אם לא נמצאו תוצאות תואמות בשום צורה
-  if (matches.length === 0) {
-    // 1. שמירה אוטומטית בבקשות ממתינות
+  // 2. חיפוש מדויק במאגר הערוצים/הקבוצות
+  const channelMatches = smartSearch(query, db.channels || []);
+
+  // אם לא נמצא שום דבר (לא סרטים ולא ערוצים)
+  if (movieMatches.length === 0 && channelMatches.length === 0) {
     if (!db.pendingRequests) db.pendingRequests = [];
     
     const exists = db.pendingRequests.some(r => normalizeText(r.query) === normalizeText(query));
@@ -621,7 +715,6 @@ bot.on('message', async (ctx, next) => {
       await saveDb(db);
     }
 
-    // 2. הודעת לא נמצא נקייה עם מחיקה אוטומטית
     const errReply = await ctx.reply(
       `⚠️ <b>לא נמצאו תוצאות עבור:</b> "<code>${query}</code>"\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -636,21 +729,42 @@ bot.on('message', async (ctx, next) => {
     return;
   }
 
-  // נמצאו תוצאות קשורות!
-  const searchKey = 'q_' + Date.now();
-  if (!global.searchCache) global.searchCache = new Map();
-  global.searchCache.set(searchKey, matches);
+  // 3. אם נמצאו סרטים/פרקים -> שליחת הודעת התוצאות
+  if (movieMatches.length > 0) {
+    const searchKey = 'q_' + Date.now();
+    if (!global.searchCache) global.searchCache = new Map();
+    global.searchCache.set(searchKey, movieMatches);
 
-  return ctx.reply(
-    `🔎 <b>נמצאו ${matches.length} תוצאות עבור:</b> "<b>${query}</b>"\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `בחר פרק מבוקש או לחץ על <b>'שולח בפרטי'</b>:`,
-    {
-      parse_mode: 'HTML',
-      reply_to_message_id: ctx.message.message_id,
-      ...buildSearchKeyboard(searchKey, matches)
+    await ctx.reply(
+      `🔎 <b>נמצאו ${movieMatches.length} תוצאות עבור:</b> "<b>${query}</b>"\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `בחר פרק מבוקש או לחץ על <b>'שולח בפרטי'</b>:`,
+      {
+        parse_mode: 'HTML',
+        reply_to_message_id: ctx.message.message_id,
+        ...buildSearchKeyboard(searchKey, movieMatches)
+      }
+    );
+  }
+
+  // 4. אם נמצאו ערוצים שמורים -> שליחת הודעה מעוצבת נפרדת עם הכפתור!
+  if (channelMatches.length > 0) {
+    for (const chan of channelMatches) {
+      await ctx.reply(
+        `✨ <b>נמצא ערוץ רשמי/ייעודי עבור: "${query}"</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📌 <b>${chan.title}</b>\n\n` +
+        `🍿 <i>לצפייה, עדכונים והצטרפות ישירה לערוץ, לחץ על הכפתור למטה:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_to_message_id: ctx.message.message_id,
+          ...Markup.inlineKeyboard([
+            [Markup.button.url(`🚀 מעבר ישיר לערוץ: ${chan.title}`, chan.link)]
+          ])
+        }
+      );
     }
-  );
+  }
 });
 
 // ==========================================
