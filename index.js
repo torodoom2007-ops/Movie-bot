@@ -35,7 +35,7 @@ const BRAND_CAPTION = (title) =>
 // ==========================================
 function normalizeText(str) {
   if (!str) return '';
-  return str
+  return String(str)
     .toLowerCase()
     .replace(/["'״׳\-_\.\,\:\;\!\?\(\)\[\]]/g, ' ')
     .replace(/[ם]/g, 'מ')
@@ -56,7 +56,9 @@ function smartSearch(query, items) {
 
   const scored = items.map(item => {
     let maxScore = 0;
-    const aliases = item.aliases || [item.title || item.name];
+    const aliases = (Array.isArray(item.aliases) && item.aliases.length > 0) 
+      ? item.aliases 
+      : [item.title || item.name || ''];
 
     for (const alias of aliases) {
       const cleanAlias = normalizeText(alias);
@@ -109,9 +111,9 @@ function loadLocalDb() {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       return {
-        movies: parsed.movies || [],
-        channels: parsed.channels || [],
-        pendingRequests: parsed.pendingRequests || []
+        movies: Array.isArray(parsed.movies) ? parsed.movies : [],
+        channels: Array.isArray(parsed.channels) ? parsed.channels : [],
+        pendingRequests: Array.isArray(parsed.pendingRequests) ? parsed.pendingRequests : []
       };
     }
   } catch (e) {
@@ -163,9 +165,9 @@ async function autoRestoreFromTelegram() {
             const restored = JSON.parse(rawData);
             if (restored) {
               db = {
-                movies: restored.movies || [],
-                channels: restored.channels || [],
-                pendingRequests: restored.pendingRequests || []
+                movies: Array.isArray(restored.movies) ? restored.movies : [],
+                channels: Array.isArray(restored.channels) ? restored.channels : [],
+                pendingRequests: Array.isArray(restored.pendingRequests) ? restored.pendingRequests : []
               };
               fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
               console.log(`✅ שוחזרו בהצלחה ${db.movies.length} סרטים ו-${db.channels.length} ערוצים!`);
@@ -246,7 +248,7 @@ bot.start(async (ctx) => {
 });
 
 // ==========================================
-// 📢 ניהול ערוצים / קבוצות שמורות
+// 📢 ניהול ערוצים / קבוצות שמורות (מתוקן ומאובטח)
 // ==========================================
 bot.hears('📢 הוספת ערוץ/סדרה', (ctx) => {
   if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
@@ -254,8 +256,8 @@ bot.hears('📢 הוספת ערוץ/סדרה', (ctx) => {
   ctx.session.step = 'WAIT_CHANNEL_LINK';
   return ctx.reply(
     `🔗 <b>שלב 1 מתוך 2: הוספת ערוץ/קבוצה מומלצת</b>\n\n` +
-    `שלח כעת את קישור הקישור הציבורי או הפרטי של הערוץ/הקבוצה:\n` +
-    `<i>(למשל: https://t.me/example_channel)</i>`,
+    `שלח כעת את הקישור לערוץ/קבוצה:\n` +
+    `<i>(דוגמה: https://t.me/example_channel)</i>`,
     { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
   );
 });
@@ -273,7 +275,7 @@ bot.hears(/^📢 ערוצים שמורים/, (ctx) => {
     ctx.reply(
       `📌 <b>שם:</b> ${c.title}\n` +
       `🔗 <b>קישור:</b> ${c.link}\n` +
-      `🔍 <b>מילות מפתח:</b> <code>${c.aliases.join(', ')}</code>`,
+      `🔍 <b>מילות מפתח:</b> <code>${(c.aliases || []).join(', ')}</code>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🗑️ מחק ערוץ', `del_chan_${c.id}`)]])
@@ -428,14 +430,14 @@ bot.hears('❌ ביטול', (ctx) => {
 bot.hears('🗃️ מאגר סרטים', (ctx) => {
   if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
   
-  if (db.movies.length === 0) {
+  if (!db.movies || db.movies.length === 0) {
     return ctx.reply('🗃 המאגר ריק כרגע.');
   }
 
   ctx.reply(`📦 <b>סה"כ סרטים/סדרות במאגר:</b> <code>${db.movies.length}</code>`, { parse_mode: 'HTML' });
   db.movies.forEach((m, idx) => {
     ctx.reply(
-      `<b>${idx + 1}. ${m.title}</b>\n🔍 מילות חיפוש: <code>${m.aliases.join(', ')}</code>`,
+      `<b>${idx + 1}. ${m.title}</b>\n🔍 מילות חיפוש: <code>${(m.aliases || []).join(', ')}</code>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🗑️ מחק', `del_${m.id}`)]])
@@ -460,42 +462,60 @@ bot.hears('🔄 שחזור ידני מגיבוי', (ctx) => {
 });
 
 // ==========================================
-// 📥 קליטת נתונים בצ'אט פרטי
+// 📥 קליטת נתונים בצ'אט פרטי (משודרג ומאובטח)
 // ==========================================
 bot.on('message', async (ctx, next) => {
   if (ctx.chat.type !== 'private') return next();
   if (!isAdmin(ctx)) return;
 
-  const step = ctx.session.step;
+  const step = ctx.session?.step;
+  if (!step) return next();
 
-  if (step === 'WAIT_CHANNEL_LINK' && ctx.message.text) {
+  // טיפול בביטול
+  if (ctx.message.text === '❌ ביטול') {
+    ctx.session = {};
+    return ctx.reply('הפעולה בוטלה.', getMainKeyboard());
+  }
+
+  // --- הוספת ערוץ/קבוצה ---
+  if (step === 'WAIT_CHANNEL_LINK') {
+    if (!ctx.message.text) {
+      return ctx.reply('⚠️ אנא שלח קישור תקין בטקסט.');
+    }
     const link = ctx.message.text.trim();
-    if (link === '❌ ביטול') return next();
-
-    ctx.session.tempChannel = { link };
+    ctx.session.tempChannelLink = link;
     ctx.session.step = 'WAIT_CHANNEL_INFO';
 
     return ctx.reply(
       `✍️ <b>שלב 2 מתוך 2:</b>\n` +
       `שלח כעת את **שם הערוץ/הסדרה ומילות החיפוש** (מופרדות בפסיקים).\n\n` +
-      `<i>דוגמה: <code>ריק ומורטי, Rick and Morty, ריק ומורטי ערוץ רשמי</code></i>`,
-      { parse_mode: 'HTML' }
+      `<i>דוגמה: <code>ריק ומורטי, Rick and Morty, ערוץ רשמי</code></i>`,
+      { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
     );
   }
 
-  if (step === 'WAIT_CHANNEL_INFO' && ctx.message.text) {
-    const input = ctx.message.text.trim();
-    if (input === '❌ ביטול') return next();
+  if (step === 'WAIT_CHANNEL_INFO') {
+    if (!ctx.message.text) {
+      return ctx.reply('⚠️ אנא שלח טקסט עבור שם הערוץ ומילות החיפוש.');
+    }
 
+    const link = ctx.session.tempChannelLink;
+    if (!link) {
+      ctx.session = {};
+      return ctx.reply('❌ הקישור אבד. אנא התחל את תהליך הוספת הערוץ מחדש.', getMainKeyboard());
+    }
+
+    const input = ctx.message.text.trim();
     const aliases = input.split(/,|,\s*|\n/).map(s => s.trim()).filter(Boolean);
     const mainTitle = aliases[0] || 'ערוץ ללא שם';
 
-    if (!db.channels) db.channels = [];
+    if (!Array.isArray(db.channels)) db.channels = [];
+
     db.channels.push({
       id: 'chan_' + Date.now(),
       title: mainTitle,
-      link: ctx.session.tempChannel.link,
-      aliases: aliases
+      link: link,
+      aliases: aliases.length > 0 ? aliases : [mainTitle]
     });
 
     await saveDb(db);
@@ -504,12 +524,13 @@ bot.on('message', async (ctx, next) => {
     return ctx.reply(
       `🎉 <b>הערוץ/הקבוצה נשמרו בהצלחה במאגר!</b>\n\n` +
       `📢 <b>שם:</b> ${mainTitle}\n` +
-      `🔗 <b>קישור:</b> ${ctx.session.tempChannel.link}\n` +
+      `🔗 <b>קישור:</b> ${link}\n` +
       `🔍 <b>מילות מפתח:</b> <code>${aliases.join(', ')}</code>`,
       { parse_mode: 'HTML', ...getMainKeyboard() }
     );
   }
 
+  // --- הוספת סדרה ---
   if (step === 'WAIT_SERIES_FILES') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (isMedia) {
@@ -526,8 +547,6 @@ bot.on('message', async (ctx, next) => {
 
   if (step === 'WAIT_SERIES_NAME' && ctx.message.text) {
     const rawInput = ctx.message.text.trim();
-    if (rawInput === '✅ סיימתי להעלות פרקים' || rawInput === '❌ ביטול') return next();
-
     let seriesTitle = rawInput;
     let startEp = 1;
 
@@ -573,9 +592,10 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
+  // --- הוספת סרט ---
   if (step === 'WAIT_FILE') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
-    if (!isMedia) return ctx.reply('⚠️️ אנא שלח קובץ וידאו או מסמך תקין.');
+    if (!isMedia) return ctx.reply('⚠ אנא שלח קובץ וידאו או מסמך תקין.');
 
     ctx.session.tempMovie = {
       from_chat_id: ctx.chat.id,
@@ -620,6 +640,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
+  // --- שחזור גיבוי ---
   if (step === 'WAIT_BACKUP' && ctx.message.document) {
     try {
       const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
@@ -627,16 +648,20 @@ bot.on('message', async (ctx, next) => {
         let raw = '';
         res.on('data', chunk => raw += chunk);
         res.on('end', async () => {
-          const parsed = JSON.parse(raw);
-          if (parsed) {
-            db = {
-              movies: parsed.movies || [],
-              channels: parsed.channels || [],
-              pendingRequests: parsed.pendingRequests || []
-            };
-            await saveDb(db);
-            ctx.session = {};
-            return ctx.reply(`✅ המאגר שוחזר בהצלחה!`, getMainKeyboard());
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed) {
+              db = {
+                movies: Array.isArray(parsed.movies) ? parsed.movies : [],
+                channels: Array.isArray(parsed.channels) ? parsed.channels : [],
+                pendingRequests: Array.isArray(parsed.pendingRequests) ? parsed.pendingRequests : []
+              };
+              await saveDb(db);
+              ctx.session = {};
+              return ctx.reply(`✅ המאגר שוחזר בהצלחה!`, getMainKeyboard());
+            }
+          } catch (err) {
+            return ctx.reply('❌ הקובץ אינו תקין.');
           }
         });
       });
@@ -673,7 +698,7 @@ bot.on('message', async (ctx, next) => {
   const channelMatches = smartSearch(query, db.channels || []);
 
   if (movieMatches.length === 0 && channelMatches.length === 0) {
-    if (!db.pendingRequests) db.pendingRequests = [];
+    if (!Array.isArray(db.pendingRequests)) db.pendingRequests = [];
     
     const exists = db.pendingRequests.some(r => normalizeText(r.query) === normalizeText(query));
     if (!exists) {
@@ -809,7 +834,7 @@ bot.action(/^sendall_(.+)$/, async (ctx) => {
 // ==========================================
 bot.action(/^get_(.+)$/, async (ctx) => {
   const movieId = ctx.match[1];
-  const movie = db.movies.find(m => m.id === movieId);
+  const movie = (db.movies || []).find(m => m.id === movieId);
 
   if (!movie) {
     return ctx.answerCbQuery('❌ הסרט אינו זמין עוד במאגר.', { show_alert: true });
