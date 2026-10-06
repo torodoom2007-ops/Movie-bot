@@ -10,6 +10,8 @@ const ADMIN_ID = String(process.env.ADMIN_ID || '8017590244');
 const PORT = process.env.PORT || 3000;
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 
+let BOT_USERNAME = ''; // ייטען אוטומטית בעת הפעלת הבוט
+
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN חסר!');
   process.exit(1);
@@ -183,21 +185,76 @@ const mainKeyboard = Markup.keyboard([
 ]).resize();
 
 // ==========================================
-// 👑 פאנל ניהול אדמין (שיחה פרטית)
+// 🚀 טיפול ברוט /START וקישורי עומק (Deep Links)
 // ==========================================
 
-bot.start((ctx) => {
-  if (ctx.chat.type !== 'private') return;
-  if (!isAdmin(ctx)) return ctx.reply('⛔ גישה למנהלים בלבד.');
+bot.start(async (ctx) => {
+  const payload = ctx.startPayload; // נקלט בעת לחיצה על קישור start=...
 
-  ctx.session = {};
-  return ctx.reply(
-    `🍿 <b>MOVIE TIME VIP | BOT ADMIN</b> 🍿\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `⚡ הבוט פעיל ומוכן לעבודה בקבוצה!`,
-    { parse_mode: 'HTML', ...mainKeyboard }
-  );
+  // אם המשתמש הגיע דרך קישור שליחה אוטומטית בפרטי
+  if (payload) {
+    if (payload.startsWith('sendall_')) {
+      const searchKey = payload.replace('sendall_', '');
+      const matches = global.searchCache?.get(searchKey);
+
+      if (matches && matches.length > 0) {
+        await ctx.reply(`🍿 <b>שולח אליך את כל ${matches.length} הפרקים שנמצאו:</b>`, { parse_mode: 'HTML' });
+        for (const movie of matches) {
+          try {
+            await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
+              caption: BRAND_CAPTION(movie.title),
+              parse_mode: 'HTML'
+            });
+          } catch (err) {
+            console.error('Error sending file in PM:', err.message);
+          }
+        }
+        return ctx.reply(`✅ <b>כל הפרקים נשלחו בהצלחה! צפייה מהנה!</b> 🍿`, { parse_mode: 'HTML' });
+      } else {
+        return ctx.reply('⚠️ פג תוקף החיפוש או שהקבצים אינם זמינים עוד. אנא בצע חיפוש חדש בקבוצה.');
+      }
+    } else if (payload.startsWith('get_')) {
+      const movieId = payload.replace('get_', '');
+      const movie = db.movies.find(m => m.id === movieId);
+      if (movie) {
+        try {
+          await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
+            caption: BRAND_CAPTION(movie.title),
+            parse_mode: 'HTML'
+          });
+          return ctx.reply(`✅ <b>הקובץ נשלח בהצלחה! צפייה מהנה!</b> 🍿`, { parse_mode: 'HTML' });
+        } catch (err) {
+          return ctx.reply('❌ שגיאה בשליחת הקובץ.');
+        }
+      } else {
+        return ctx.reply('❌ הסרט אינו זמין עוד במאגר.');
+      }
+    }
+  }
+
+  // תפריט ראשי למנהל בפרטי
+  if (isAdmin(ctx)) {
+    ctx.session = {};
+    return ctx.reply(
+      `🍿 <b>MOVIE TIME VIP | BOT ADMIN</b> 🍿\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `⚡ הבוט פעיל ומוכן לעבודה בקבוצה!`,
+      { parse_mode: 'HTML', ...mainKeyboard }
+    );
+  } else {
+    // הודעת פתיחה למשתמש רגיל בצ'אט הפרטי
+    return ctx.reply(
+      `🍿 <b>ברוכים הבאים ל-MOVIE TIME VIP!</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `כדי לחפש סרטים וסדרות, פשוט הקלד את שם הסרט/הסדרה בקבוצה שלנו!`,
+      { parse_mode: 'HTML' }
+    );
+  }
 });
+
+// ==========================================
+// 👑 פאנל ניהול אדמין (שיחה פרטית)
+// ==========================================
 
 bot.hears('➕ הוספת סרט', (ctx) => {
   if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
@@ -210,9 +267,7 @@ bot.hears('➕ הוספת סרט', (ctx) => {
   );
 });
 
-// ==========================================
 // 📺 הוספת סדרה בלחיצה אחת
-// ==========================================
 bot.hears('📺 הוספת סדרה', (ctx) => {
   if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
 
@@ -237,7 +292,7 @@ bot.hears('✅ סיימתי להעלות פרקים', (ctx) => {
 
   return ctx.reply(
     `🎉 <b>נקלטו ${count} פרקים בהצלחה!</b>\n\n` +
-    `✍️️ <b>שלב אחרון:</b>\n` +
+    `✍ <b>שלב אחרון:</b>\n` +
     `שלח כעת את שם הסדרה והעונה (למשל: <code>סדרה עונה 1</code>).\n\n` +
     `<i>💡 רוצה להתחיל מפרק מסוים? (למשל מפרק 5 והלאה): רשום <code>סדרה עונה 1 | 5</code></i>`,
     { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
@@ -432,34 +487,18 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ==========================================
-// 🔍 מנוע חיפוש ושילוח בקבוצה (פיד נקי ודפדוף)
+// 🔍 מנוע חיפוש ושילוח בקבוצה ("הצג הכל" ושליחה בפרטי)
 // ==========================================
 
-const PAGE_SIZE = 4; // כמות תוצאות לעמוד
+// בניית מקלדת מותאמת - הצגת כל התוצאות ללא דפדוף + כפתור שליחה בפרטי
+function buildSearchKeyboard(searchKey, matches) {
+  // יוצרים כפתור לכל פרק/סרט שנמצא ("הצג הכל")
+  const buttons = matches.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
 
-// בנה מקלדת כפתורים מותאמת לפי עמוד
-function buildSearchKeyboard(searchKey, matches, page = 0) {
-  const start = page * PAGE_SIZE;
-  const pageItems = matches.slice(start, start + PAGE_SIZE);
-  
-  const buttons = pageItems.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
-
-  const navRow = [];
-  const totalPages = Math.ceil(matches.length / PAGE_SIZE);
-
-  if (page > 0) {
-    navRow.push(Markup.button.callback(`➡️ הקודם`, `page_${searchKey}_${page - 1}`));
-  }
-  if (totalPages > 1) {
-    navRow.push(Markup.button.callback(`📄 ${page + 1}/${totalPages}`, `noop`));
-  }
-  if (page < totalPages - 1) {
-    navRow.push(Markup.button.callback(`הבא ⬅️`, `page_${searchKey}_${page + 1}`));
-  }
-
-  if (navRow.length > 0) {
-    buttons.push(navRow);
-  }
+  // מוסיפים בתחתית כפתור מרכזי לשליחת כל הפרקים בצ'אט הפרטי
+  buttons.push([
+    Markup.button.callback(`📩 שולח בפרטי את כל הפרקים 🎞️`, `sendall_${searchKey}`)
+  ]);
 
   return Markup.inlineKeyboard(buttons);
 }
@@ -490,52 +529,93 @@ bot.on('message', async (ctx, next) => {
     return;
   }
 
-  // שמירה ב-Cache עבור דפדוף
+  // שמירה ב-Cache עבור שליחה מרוכזת
   const searchKey = 'q_' + Date.now();
   if (!global.searchCache) global.searchCache = new Map();
   global.searchCache.set(searchKey, matches);
 
-  const totalPages = Math.ceil(matches.length / PAGE_SIZE);
-
   return ctx.reply(
     `🔎 <b>נמצאו ${matches.length} תוצאות עבור:</b> "<b>${query}</b>"\n` +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `בחר את הסרט/הפרק המבוקש מהרשימה:`,
+    `בחר פרק ספציפי או לחץ על <b>'שולח בפרטי'</b> לקבלת כל הפרקים:`,
     {
       parse_mode: 'HTML',
       reply_to_message_id: ctx.message.message_id,
-      ...buildSearchKeyboard(searchKey, matches, 0)
+      ...buildSearchKeyboard(searchKey, matches)
     }
   );
 });
 
-// כפתור סרק לתצוגת עמוד בלבד
-bot.action('noop', (ctx) => ctx.answerCbQuery());
+// ==========================================
+// 🎞️ טיפול בלחיצה על "שולח בפרטי את כל הפרקים"
+// ==========================================
 
-// ניווט בין עמודי התוצאות (עריכת הודעה קיימת)
-bot.action(/^page_(.+)_(d+)$/, (ctx) => {
+bot.action(/^sendall_(.+)$/, async (ctx) => {
   const searchKey = ctx.match[1];
-  const page = parseInt(ctx.match[2]);
   const matches = global.searchCache?.get(searchKey);
 
   if (!matches || matches.length === 0) {
-    return ctx.answerCbQuery('❌ פג תוקף החיפוש, בצע חיפוש חדש.', { show_alert: true });
+    return ctx.answerCbQuery('❌ פג תוקף החיפוש, אנא בצע חיפוש חדש בקבוצה.', { show_alert: true });
   }
 
-  ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  const senderName = ctx.from?.first_name || 'משתמש';
 
-  return ctx.editMessageText(
-    `🔎 <b>תוצאות חיפוש (${matches.length}):</b>\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `בחר את הסרט/הפרק המבוקש מהרשימה:`,
-    {
-      parse_mode: 'HTML',
-      ...buildSearchKeyboard(searchKey, matches, page)
+  ctx.answerCbQuery('🎞️ מעבד שליחה בצ\'אט הפרטי...');
+
+  // ננסה לשלוח ישירות לפרטי של המשתמש
+  let successCount = 0;
+  let hasError = false;
+
+  for (const movie of matches) {
+    try {
+      await ctx.telegram.copyMessage(userId, movie.from_chat_id, movie.message_id, {
+        caption: BRAND_CAPTION(movie.title),
+        parse_mode: 'HTML'
+      });
+      successCount++;
+    } catch (err) {
+      hasError = true;
+      break; // אם נכשל (למשל כי המשתמש לא לחץ START בפרטי), נעצור ונציע כפתור START
     }
-  );
+  }
+
+  // אם הבוט לא יכול לשלוח הודעה בפרטי (המשתמש לא הפעיל את הבוט עדיין)
+  if (hasError && successCount === 0) {
+    const botUrl = `https://t.me/${BOT_USERNAME || 'bot'}?start=sendall_${searchKey}`;
+    
+    return ctx.reply(
+      `⚠️ <b>שלום ${senderName}!</b>\n` +
+      `כדי לקבל את הפרקים בצ'אט הפרטי, עליך להפעיל את הבוט תחילה.\n\n` +
+      `👇 <b>לחץ על הכפתור למטה ולחץ START בבוט:</b>`,
+      {
+        parse_mode: 'HTML',
+        reply_to_message_id: ctx.callbackQuery.message.message_id,
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('🚀 לחץ כאן להפעלת הבוט (START) 🎞️', botUrl)]
+        ])
+      }
+    );
+  }
+
+  // הודעת אישור בקבוצה על השליחה
+  if (successCount > 0) {
+    try {
+      await ctx.reply(
+        `✅ <b>נשלחו ${successCount} פרקים בצ'אט הפרטי עבור ${senderName}!</b> 🍿`,
+        {
+          parse_mode: 'HTML',
+          reply_to_message_id: ctx.callbackQuery.message.message_id
+        }
+      );
+    } catch (e) {}
+  }
 });
 
-// שליחת קובץ הסרט בקבוצה (בשיטת עריכת הודעה פייד נקי)
+// ==========================================
+// 🎬 שליחת קובץ בודד בקבוצה (פיד נקי)
+// ==========================================
+
 bot.action(/^get_(.+)$/, async (ctx) => {
   const movieId = ctx.match[1];
   const movie = db.movies.find(m => m.id === movieId);
@@ -568,11 +648,11 @@ bot.action(/^get_(.+)$/, async (ctx) => {
       `✅ <b>הקובץ נשלח בהצלחה!</b>\n` +
       `🎬 <b>${movie.title}</b>\n` +
       `👤 לבקשת: <b>${senderName}</b>\n\n` +
-      `🍿 <i>צפייה מהנה! לחיפוש נוסף פשוט הקלד את השם בקבוצה.</i>`,
+      `🍿 <i>צפייה מהנה! לחיפוש נוסף הקלד את השם בקבוצה.</i>`,
       { parse_mode: 'HTML' }
     );
   } catch (e) {
-    // במקרה של שגיאה בשליחת המדיה
+    // במקרה של שגיאה בשליחת המדיה בקבוצה
     try {
       await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id);
     } catch (err) {
@@ -596,8 +676,14 @@ app.listen(PORT, () => {
   }
 });
 
-bot.launch().then(() => {
-  console.log('🤖 הבוט פועל בהצלחה!');
+bot.launch().then(async () => {
+  try {
+    const me = await bot.telegram.getMe();
+    BOT_USERNAME = me.username;
+    console.log(`🤖 הבוט @${BOT_USERNAME} פועל בהצלחה!`);
+  } catch (e) {
+    console.log('🤖 הבוט פועל בהצלחה!');
+  }
   autoRestoreFromTelegram();
 }).catch(err => console.error('❌ שגיאה בהפעלה:', err));
 
