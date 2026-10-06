@@ -136,7 +136,7 @@ bot.hears('➕ הוספת סרט', (ctx) => {
 });
 
 // ==========================================
-// 📺 הוספת סדרה בלחיצה אחת (חדש)
+// 📺 הוספת סדרה בלחיצה אחת
 // ==========================================
 bot.hears('📺 הוספת סדרה', (ctx) => {
   if (ctx.chat.type !== 'private' || !isAdmin(ctx)) return;
@@ -282,7 +282,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // קליטת קובץ הסרט (הקיים)
+  // קליטת קובץ הסרט
   if (step === 'WAIT_FILE') {
     const isMedia = ctx.message.video || ctx.message.document || ctx.message.animation;
     if (!isMedia) {
@@ -304,7 +304,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // קליטת שמות החיפוש (הקיים)
+  // קליטת שמות החיפוש
   if (step === 'WAIT_TITLE' && ctx.message.text) {
     const input = ctx.message.text.trim();
     const aliases = input.split(/,|,\s*|\n/).map(s => s.trim()).filter(Boolean);
@@ -330,7 +330,7 @@ bot.on('message', async (ctx, next) => {
     );
   }
 
-  // שחזור ידני (הקיים)
+  // שחזור ידני
   if (step === 'WAIT_BACKUP' && ctx.message.document) {
     try {
       const link = await ctx.telegram.getFileLink(ctx.message.document.file_id);
@@ -364,14 +364,19 @@ bot.on('message', async (ctx, next) => {
   if (!ctx.message.text || ctx.message.text.startsWith('/')) return next();
 
   const query = ctx.message.text.trim().toLowerCase();
-  if (query.length < 2 || db.movies.length === 0) return next();
+  if (query.length < 2) return next();
 
   // סינון תוצאות לפי מילות החיפוש
-  const matches = db.movies.filter(movie =>
-    movie.aliases.some(alias => alias.toLowerCase().includes(query) || query.includes(alias.toLowerCase()))
+  const matches = (db.movies || []).filter(movie =>
+    movie.aliases && movie.aliases.some(alias => alias.toLowerCase().includes(query) || query.includes(alias.toLowerCase()))
   );
 
-  if (matches.length === 0) return next();
+  // אם לא נמצאו תוצאות או שהמאגר ריק
+  if (matches.length === 0) {
+    return ctx.reply('לא נמצא ⚠️, נא לחפש שם סרט או סדרה בלבד.', {
+      reply_to_message_id: ctx.message.message_id
+    });
+  }
 
   // אם יש 3 תוצאות ומטה
   if (matches.length <= 3) {
