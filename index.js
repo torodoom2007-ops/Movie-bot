@@ -18,11 +18,87 @@ if (!BOT_TOKEN) {
 const bot = new Telegraf(BOT_TOKEN);
 const DB_FILE = path.join(__dirname, 'movies_db.json');
 
-// חותמת מותג אחידה
+// ==========================================
+// 🎨 מיתוג ועיצוב הודעות
+// ==========================================
 const BRAND_CAPTION = (title) => 
-  `🎬 <b>${title}</b>\n\n` +
-  `🍿 <b>MOVIE TIME</b>\n` +
-  `🔗 https://t.me/movie_time_by`;
+  `🎬 <b>${title}</b>\n` +
+  `━━━━━━━━━━━━━━━━━━━━━━\n` +
+  `🍿 <b>MOVIE TIME VIP</b>\n` +
+  `✨ צפייה מהנה!\n\n` +
+  `🔗 <a href="https://t.me/movie_time_by">להצטרפות לערוץ הרשמי שלנו</a>`;
+
+// ==========================================
+// 🧠 מנוע חיפוש חכם ונרמול טקסט
+// ==========================================
+
+// נרמול טקסט (טיפול באותיות סופיות, ניקוי פיסוק ורווחים)
+function normalizeText(str) {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .replace(/["'״׳\-_\.\,\:\;\!\?\(\)\[\]]/g, ' ')
+    .replace(/[ם]/g, 'מ')
+    .replace(/[ן]/g, 'נ')
+    .replace(/[ץ]/g, 'צ')
+    .replace(/[ף]/g, 'פ')
+    .replace(/[ך]/g, 'כ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// אלגוריתם דירוג חיפוש חכם
+function smartSearch(query, movies) {
+  const cleanQuery = normalizeText(query);
+  if (!cleanQuery) return [];
+
+  const queryWords = cleanQuery.split(' ').filter(w => w.length > 0);
+
+  const scored = movies.map(movie => {
+    let maxScore = 0;
+    
+    for (const alias of (movie.aliases || [])) {
+      const cleanAlias = normalizeText(alias);
+      if (!cleanAlias) continue;
+
+      if (cleanAlias === cleanQuery) {
+        maxScore = Math.max(maxScore, 100); // התאמה מדויקת
+      } else if (cleanAlias.startsWith(cleanQuery)) {
+        maxScore = Math.max(maxScore, 80);  // מתחיל בשילוב המבוקש
+      } else if (cleanAlias.includes(cleanQuery)) {
+        maxScore = Math.max(maxScore, 60);  // מכיל את המחרוזת
+      } else {
+        // חיפוש לפי מילים בודדות
+        const aliasWords = cleanAlias.split(' ');
+        const matchedWords = queryWords.filter(qw => 
+          aliasWords.some(aw => aw.includes(qw) || qw.includes(aw))
+        );
+        if (matchedWords.length === queryWords.length) {
+          maxScore = Math.max(maxScore, 50); // מכיל את כל המילים
+        } else if (matchedWords.length > 0) {
+          maxScore = Math.max(maxScore, 20 * matchedWords.length); // התאמה חלקית
+        }
+      }
+    }
+    return { movie, score: maxScore };
+  });
+
+  return scored
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.movie);
+}
+
+// עוזר למחיקה אוטומטית לשמירה על פיד נקי
+function autoDeleteMessage(ctx, chatId, messageId, delayMs = 12000) {
+  setTimeout(async () => {
+    try {
+      await ctx.telegram.deleteMessage(chatId, messageId);
+    } catch (e) {
+      // הודעות שכבר נמחקו/אין הרשאה
+    }
+  }, delayMs);
+}
 
 // ==========================================
 // 💾 מנגנון מאגר נתונים + גיבוי ענן אוטומטי
@@ -46,7 +122,6 @@ async function saveDb(data) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
     
-    // שליחת קובץ גיבוי לאדמין ונעיצתו לטובת שחזור אוטומטי בעתיד
     const doc = await bot.telegram.sendDocument(ADMIN_ID, {
       source: DB_FILE,
       filename: 'movies_db.json'
@@ -62,7 +137,7 @@ async function saveDb(data) {
 
 // שחזור אוטומטי מנעיצת טלגרם בעת הפעלה מחדש
 async function autoRestoreFromTelegram() {
-  if (db.movies && db.movies.length > 0) return; // יש כבר נתונים
+  if (db.movies && db.movies.length > 0) return;
 
   console.log('🔍 מנסה לשחזר מאגר מנעיצה בטלגרם...');
   try {
@@ -119,7 +194,7 @@ bot.start((ctx) => {
   return ctx.reply(
     `🍿 <b>MOVIE TIME VIP | BOT ADMIN</b> 🍿\n` +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `הבוט פעיל ומוכן לעבודה בקבוצה!`,
+    `⚡ הבוט פעיל ומוכן לעבודה בקבוצה!`,
     { parse_mode: 'HTML', ...mainKeyboard }
   );
 });
@@ -162,7 +237,7 @@ bot.hears('✅ סיימתי להעלות פרקים', (ctx) => {
 
   return ctx.reply(
     `🎉 <b>נקלטו ${count} פרקים בהצלחה!</b>\n\n` +
-    `✍️ <b>שלב אחרון:</b>\n` +
+    `✍️️ <b>שלב אחרון:</b>\n` +
     `שלח כעת את שם הסדרה והעונה (למשל: <code>סדרה עונה 1</code>).\n\n` +
     `<i>💡 רוצה להתחיל מפרק מסוים? (למשל מפרק 5 והלאה): רשום <code>סדרה עונה 1 | 5</code></i>`,
     { parse_mode: 'HTML', ...Markup.keyboard([['❌ ביטול']]).resize() }
@@ -182,7 +257,7 @@ bot.hears('🗃️ מאגר סרטים', (ctx) => {
     return ctx.reply('🗃 המאגר ריק כרגע.');
   }
 
-  ctx.reply(`📦 <b>סה"כ סרטים במאגר:</b> <code>${db.movies.length}</code>`, { parse_mode: 'HTML' });
+  ctx.reply(`📦 <b>סה"כ סרטים/סדרות במאגר:</b> <code>${db.movies.length}</code>`, { parse_mode: 'HTML' });
   db.movies.forEach((m, idx) => {
     ctx.reply(
       `<b>${idx + 1}. ${m.title}</b>\n🔍 מילות חיפוש: <code>${m.aliases.join(', ')}</code>`,
@@ -357,72 +432,110 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ==========================================
-// 🔍 מנוע חיפוש ושילוח בקבוצה
+// 🔍 מנוע חיפוש ושילוח בקבוצה (פיד נקי ודפדוף)
 // ==========================================
+
+const PAGE_SIZE = 4; // כמות תוצאות לעמוד
+
+// בנה מקלדת כפתורים מותאמת לפי עמוד
+function buildSearchKeyboard(searchKey, matches, page = 0) {
+  const start = page * PAGE_SIZE;
+  const pageItems = matches.slice(start, start + PAGE_SIZE);
+  
+  const buttons = pageItems.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
+
+  const navRow = [];
+  const totalPages = Math.ceil(matches.length / PAGE_SIZE);
+
+  if (page > 0) {
+    navRow.push(Markup.button.callback(`➡️ הקודם`, `page_${searchKey}_${page - 1}`));
+  }
+  if (totalPages > 1) {
+    navRow.push(Markup.button.callback(`📄 ${page + 1}/${totalPages}`, `noop`));
+  }
+  if (page < totalPages - 1) {
+    navRow.push(Markup.button.callback(`הבא ⬅️`, `page_${searchKey}_${page + 1}`));
+  }
+
+  if (navRow.length > 0) {
+    buttons.push(navRow);
+  }
+
+  return Markup.inlineKeyboard(buttons);
+}
+
 bot.on('message', async (ctx, next) => {
   if (ctx.chat.type === 'private') return next();
   if (!ctx.message.text || ctx.message.text.startsWith('/')) return next();
 
-  const query = ctx.message.text.trim().toLowerCase();
+  const query = ctx.message.text.trim();
   if (query.length < 2) return next();
 
-  // סינון תוצאות לפי מילות החיפוש
-  const matches = (db.movies || []).filter(movie =>
-    movie.aliases && movie.aliases.some(alias => alias.toLowerCase().includes(query) || query.includes(alias.toLowerCase()))
-  );
+  // חיפוש חכם
+  const matches = smartSearch(query, db.movies || []);
 
-  // אם לא נמצאו תוצאות או שהמאגר ריק
+  // אם לא נמצאו תוצאות
   if (matches.length === 0) {
-    return ctx.reply('לא נמצא ⚠️, נא לחפש שם סרט או סדרה בלבד.', {
-      reply_to_message_id: ctx.message.message_id
-    });
-  }
-
-  // אם יש 3 תוצאות ומטה
-  if (matches.length <= 3) {
-    const buttons = matches.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
-    return ctx.reply(
-      `🔎 נמצאו <b>${matches.length}</b> תוצאות עבור: "<b>${ctx.message.text}</b>"`,
-      { parse_mode: 'HTML', reply_to_message_id: ctx.message.message_id, ...Markup.inlineKeyboard(buttons) }
+    const errReply = await ctx.reply(
+      `⚠️ <b>לא נמצאו תוצאות עבור:</b> "<code>${query}</code>"\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `נא לחפש שם מדויק של סרט או סדרה בלבד.`,
+      {
+        parse_mode: 'HTML',
+        reply_to_message_id: ctx.message.message_id
+      }
     );
+    // מחיקה אוטומטית לשמירה על פיד נקי
+    autoDeleteMessage(ctx, ctx.chat.id, errReply.message_id, 12000);
+    return;
   }
 
-  // אם יש מעל 3 תוצאות -> מציגים 3 כפתורים ראשונים + כפתור להצגת כולן
-  const top3 = matches.slice(0, 3);
-  const buttons = top3.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
-  
-  // מפתח חיפוש מקוצר למעקב
+  // שמירה ב-Cache עבור דפדוף
   const searchKey = 'q_' + Date.now();
   if (!global.searchCache) global.searchCache = new Map();
   global.searchCache.set(searchKey, matches);
 
-  buttons.push([Markup.button.callback(`🔍 הצג את כל ${matches.length} התוצאות`, `all_${searchKey}`)]);
+  const totalPages = Math.ceil(matches.length / PAGE_SIZE);
 
   return ctx.reply(
-    `🔎 נמצאו <b>${matches.length}</b> תוצאות עבור: "<b>${ctx.message.text}</b>"`,
-    { parse_mode: 'HTML', reply_to_message_id: ctx.message.message_id, ...Markup.inlineKeyboard(buttons) }
+    `🔎 <b>נמצאו ${matches.length} תוצאות עבור:</b> "<b>${query}</b>"\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `בחר את הסרט/הפרק המבוקש מהרשימה:`,
+    {
+      parse_mode: 'HTML',
+      reply_to_message_id: ctx.message.message_id,
+      ...buildSearchKeyboard(searchKey, matches, 0)
+    }
   );
 });
 
-// הצגת כל התוצאות
-bot.action(/^all_(.+)$/, (ctx) => {
+// כפתור סרק לתצוגת עמוד בלבד
+bot.action('noop', (ctx) => ctx.answerCbQuery());
+
+// ניווט בין עמודי התוצאות (עריכת הודעה קיימת)
+bot.action(/^page_(.+)_(d+)$/, (ctx) => {
   const searchKey = ctx.match[1];
+  const page = parseInt(ctx.match[2]);
   const matches = global.searchCache?.get(searchKey);
 
   if (!matches || matches.length === 0) {
-    return ctx.answerCbQuery('❌ התוצאות פגו, בצע חיפוש חדש.', { show_alert: true });
+    return ctx.answerCbQuery('❌ פג תוקף החיפוש, בצע חיפוש חדש.', { show_alert: true });
   }
 
   ctx.answerCbQuery();
-  const allButtons = matches.map(m => [Markup.button.callback(`🍿 ${m.title}`, `get_${m.id}`)]);
 
   return ctx.editMessageText(
-    `📋 <b>כל ${matches.length} התוצאות שנמצאו:</b>`,
-    { parse_mode: 'HTML', ...Markup.inlineKeyboard(allButtons) }
+    `🔎 <b>תוצאות חיפוש (${matches.length}):</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `בחר את הסרט/הפרק המבוקש מהרשימה:`,
+    {
+      parse_mode: 'HTML',
+      ...buildSearchKeyboard(searchKey, matches, page)
+    }
   );
 });
 
-// שליחת קובץ הסרט בקבוצה
+// שליחת קובץ הסרט בקבוצה (בשיטת עריכת הודעה פייד נקי)
 bot.action(/^get_(.+)$/, async (ctx) => {
   const movieId = ctx.match[1];
   const movie = db.movies.find(m => m.id === movieId);
@@ -431,15 +544,40 @@ bot.action(/^get_(.+)$/, async (ctx) => {
     return ctx.answerCbQuery('❌ הסרט אינו זמין עוד במאגר.', { show_alert: true });
   }
 
-  ctx.answerCbQuery('🍿 שולח את הסרט...');
+  const senderName = ctx.from?.first_name || 'משתמש';
+  ctx.answerCbQuery('🍿 שולח את הקובץ...');
+
+  // עריכת הודעת התפריט להודעת טעינה נקייה
+  try {
+    await ctx.editMessageText(
+      `⏳ <b>שולח כעת את:</b> "<b>${movie.title}</b>"\n` +
+      `<i>לבקשת: ${senderName}...</i>`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (e) {}
 
   try {
+    // העתקת/שליחת המדיה בקבוצה
     await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id, {
       caption: BRAND_CAPTION(movie.title),
       parse_mode: 'HTML'
     });
+
+    // עדכון הודעת התפריט לאישור שנשלח
+    await ctx.editMessageText(
+      `✅ <b>הקובץ נשלח בהצלחה!</b>\n` +
+      `🎬 <b>${movie.title}</b>\n` +
+      `👤 לבקשת: <b>${senderName}</b>\n\n` +
+      `🍿 <i>צפייה מהנה! לחיפוש נוסף פשוט הקלד את השם בקבוצה.</i>`,
+      { parse_mode: 'HTML' }
+    );
   } catch (e) {
-    await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id);
+    // במקרה של שגיאה בשליחת המדיה
+    try {
+      await ctx.telegram.copyMessage(ctx.chat.id, movie.from_chat_id, movie.message_id);
+    } catch (err) {
+      await ctx.editMessageText(`❌ שגיאה בשליחת הקובץ. וודא שהקובץ קיים במקור.`, { parse_mode: 'HTML' });
+    }
   }
 });
 
